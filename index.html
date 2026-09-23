@@ -331,16 +331,28 @@ body[data-script="lat"] .ar,body[data-script="lat"] .st-ar,body[data-script="lat
       <label><input type="checkbox" id="sAuto"> Leer la traducción automáticamente</label>
     </div>
 
-    <h3>Motor de reserva (NVIDIA)</h3>
+    <h3>Motores de apoyo</h3>
     <div class="field">
       <label for="sEngine">Motor de traducción</label>
       <select id="sEngine">
-        <option value="auto">Gemini, y NVIDIA si Gemini falla</option>
+        <option value="auto">Automático: Gemini, y Groq o NVIDIA si Gemini tarda</option>
         <option value="gemini">Solo Gemini</option>
+        <option value="groq">Solo Groq</option>
         <option value="nvidia">Solo NVIDIA</option>
       </select>
-      <p class="help">NVIDIA solo traduce texto. Cuando se usa, la voz del alumno se reconoce con el navegador.</p>
+      <p class="help">Groq y NVIDIA solo traducen texto. Cuando se usan solos, la voz del alumno se reconoce con el navegador.</p>
     </div>
+    <div class="field">
+      <label for="sGroqKey">Clave de Groq (rápido)</label>
+      <input id="sGroqKey" type="password" autocomplete="off" placeholder="gsk_...">
+      <p class="help">Gratis y sin tarjeta en <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a>. Si Gemini no responde en 2 s, Groq traduce en su lugar.</p>
+    </div>
+    <div class="field">
+      <label for="sGroqModel">Modelo de Groq</label>
+      <input id="sGroqModel" type="text" autocomplete="off">
+    </div>
+    <button class="btn" id="sGroqTest">Probar Groq</button>
+    <h3>NVIDIA (vía Apps Script)</h3>
     <div class="field">
       <label for="sNvUrl">Dirección del Apps Script</label>
       <input id="sNvUrl" type="url" autocomplete="off" placeholder="https://script.google.com/macros/s/.../exec">
@@ -387,7 +399,7 @@ const ICON_BIG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 const ICON_MIC = $('#talkEs').innerHTML;
 const ICON_STOP = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
 
-const DEF = {apiKey:'', model:'gemini-3.5-flash-lite', modelCustom:'', simple:true, script:'both', tts:'google', gemVoice:'Kore', arVoice:'', esVoice:'', rate:0.9, auto:true, daIn:'ai', liveVoice:false, liveScale:1, engine:'auto', nvUrl:'', nvToken:'', nvModels:'google/gemma-4-31b-it'};
+const DEF = {apiKey:'', model:'gemini-3.5-flash-lite', modelCustom:'', simple:true, script:'both', tts:'google', gemVoice:'Kore', arVoice:'', esVoice:'', rate:0.9, auto:true, daIn:'ai', liveVoice:false, liveScale:1, engine:'auto', nvUrl:'', nvToken:'', nvModels:'google/gemma-4-31b-it', groqKey:'', groqModel:'llama-3.3-70b-versatile'};
 const S = (() => { try { return Object.assign({}, DEF, JSON.parse(localStorage.getItem('puente-settings') || '{}')); } catch(e) { return {...DEF}; } })();
 if ((S.ver || 1) < 2) { S.tts = 'google'; S.ver = 2; try { localStorage.setItem('puente-settings', JSON.stringify(S)); } catch(e) {} }
 const saveS = () => { try { localStorage.setItem('puente-settings', JSON.stringify(S)); } catch(e) {} };
@@ -469,9 +481,32 @@ async function askNv() {
     [{label:'Ahora no', value:0}, {label:'Abrir ajustes', primary:true, value:1}]);
   if (r === 1) openSettings();
 }
+const groqReady = () => !!S.groqKey;
+async function groq(system, user) {
+  if (!groqReady()) throw Object.assign(new Error('Falta la clave de Groq en Ajustes.'), {status:400});
+  const call = async json => {
+    const body = {model:S.groqModel || DEF.groqModel, messages:[{role:'system', content:system}, {role:'user', content:user}], temperature:0.2, max_tokens:600};
+    if (json) body.response_format = {type:'json_object'};
+    const r = await fetchT('https://api.groq.com/openai/v1/chat/completions', {method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':'Bearer ' + S.groqKey}, body:JSON.stringify(body)}, 12000, 'Groq');
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const m = (j.error && j.error.message) || ('Error ' + r.status);
+      if (json && r.status === 400 && /response_format|json/i.test(m)) return call(false);
+      const E = msg => Object.assign(new Error(msg), {status:r.status});
+      if (r.status === 401) throw E('La clave de Groq no es válida.');
+      if (r.status === 429) throw E('Groq: límite de uso alcanzado.');
+      if (r.status === 404) throw E(`Groq: el modelo «${body.model}» no existe.`);
+      throw E('Groq: ' + m);
+    }
+    return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+  };
+  return call(true);
+}
 function engineReady() {
+  if (S.engine === 'groq') { if (!groqReady()) { toast('Pega la clave de Groq en Ajustes.', 'err'); openSettings(); return false; } return true; }
   if (S.engine === 'nvidia') { if (!nvReady()) { askNv(); return false; } return true; }
-  if (S.apiKey || (S.engine === 'auto' && nvReady())) return true;
+  if (S.apiKey || (S.engine === 'auto' && (nvReady() || groqReady()))) return true;
   askKey(); return false;
 }
 async function nvidia(system, user) {
@@ -494,6 +529,11 @@ function race(stages) {
       if (done || i !== idx || i >= stages.length) return;
       idx++;
       const st = stages[i];
+      if (st.kind === 'g' && geminiCooling()) {
+        if (idx < stages.length) return launchStage(idx);
+        if (running === 0) finish(reject, lastErr || new Error('Gemini ha llegado al límite. Espera un minuto.'));
+        return;
+      }
       if (st.kind === 'n' && Date.now() - lastFallbackToast > 60000) { lastFallbackToast = Date.now(); toast('Gemini va lento: pruebo también con NVIDIA.'); }
       running++;
       st.fn().then(r => finish(resolve, r)).catch(e => {
@@ -510,15 +550,22 @@ function race(stages) {
 }
 async function llm(system, user) { // devuelve {raw, engine}
   const callN = () => nvidia(system, user).then(raw => ({raw, engine:'NVIDIA'}));
-  const useNv = S.engine === 'nvidia' || (S.engine === 'auto' && nvReady() && (!S.apiKey || geminiCooling()));
-  if (useNv) return callN();
+  const callQ = () => groq(system, user).then(raw => ({raw, engine:'Groq'}));
   const callG = () => gemini(model(), {systemInstruction:{parts:[{text:system}]}, contents:[{role:'user', parts:[{text:user}]}], generationConfig:genCfg()})
     .then(j => ({raw: textOf(j), engine:'Gemini'}));
-  const stages = [{delay:0, fn:callG, kind:'g'}, {delay:3500, fn:callG, kind:'g'}];
-  if (S.engine === 'auto' && nvReady()) stages.push({delay:8000, fn:callN, kind:'n'});
+  if (S.engine === 'nvidia') return callN();
+  if (S.engine === 'groq') return callQ();
+  const auto = S.engine === 'auto';
+  const stages = [];
+  if (S.apiKey && !(auto && geminiCooling() && (groqReady() || nvReady()))) stages.push({delay:0, fn:callG, kind:'g'});
+  if (auto && groqReady()) stages.push({delay: stages.length ? 2000 : 0, fn:callQ, kind:'q'});
+  if (S.apiKey && stages.some(x => x.kind === 'g')) stages.push({delay:4000, fn:callG, kind:'g'});
+  if (auto && nvReady()) stages.push({delay: stages.length ? 9000 : 0, fn:callN, kind:'n'});
+  if (!stages.length) { askKey(); throw Object.assign(new Error('NOKEY'), {silent:true}); }
+  stages.sort((a, b) => a.delay - b.delay);
   return race(stages);
 }
-const daUsesAI = () => S.daIn === 'ai' && S.engine !== 'nvidia' && !!S.apiKey && !geminiCooling();
+const daUsesAI = () => S.daIn === 'ai' && (S.engine === 'auto' || S.engine === 'gemini') && !!S.apiKey && !geminiCooling();
 
 const SYS = () => `Eres intérprete en un colegio público de Primaria de Andalucía (España). Traduces entre el español de España y la darija marroquí para un maestro y su alumnado de origen marroquí (de 6 a 12 años).
 Reglas:
@@ -1041,7 +1088,7 @@ function syncSettingsUI() {
   $('#sSimple').checked = S.simple; $('#sScript').value = S.script; $('#sTts').value = S.tts;
   $('#sGemVoice').value = S.gemVoice; $('#fGemVoice').hidden = S.tts !== 'gemini';
   $('#sRate').value = S.rate; $('#sRateVal').textContent = Math.round(S.rate * 100) + ' %';
-  $('#sEngine').value = S.engine; $('#sNvUrl').value = S.nvUrl; $('#sNvToken').value = S.nvToken; $('#sNvModels').value = S.nvModels;
+  $('#sEngine').value = S.engine; $('#sGroqKey').value = S.groqKey; $('#sGroqModel').value = S.groqModel; $('#sNvUrl').value = S.nvUrl; $('#sNvToken').value = S.nvToken; $('#sNvModels').value = S.nvModels;
   $('#sAuto').checked = S.auto; $('#sDaIn').value = S.daIn; $('#liveVoice').checked = S.liveVoice;
   fillVoiceSelects();
 }
@@ -1068,6 +1115,17 @@ $('#sEsVoice').onchange = e => { S.esVoice = e.target.value; saveS(); };
 $('#sRate').oninput = e => { S.rate = parseFloat(e.target.value); $('#sRateVal').textContent = Math.round(S.rate * 100) + ' %'; saveS(); };
 $('#sAuto').onchange = e => { S.auto = e.target.checked; saveS(); };
 $('#sDaIn').onchange = e => { S.daIn = e.target.value; saveS(); };
+$('#sGroqKey').oninput = e => { S.groqKey = e.target.value.trim(); saveS(); };
+$('#sGroqModel').oninput = e => { S.groqModel = e.target.value.trim() || DEF.groqModel; memCache.clear(); saveS(); };
+$('#sGroqTest').onclick = async () => {
+  const b = $('#sGroqTest'); b.disabled = true; b.textContent = 'Probando Groq…';
+  const t0 = performance.now();
+  try {
+    const r = norm(parseJSON(await groq(SYS(), 'Texto en español para traducir a darija:\n"""Hola, bienvenido a clase"""\n"spanish" = el texto original; "arabic" = la traducción en darija.')), 'es');
+    toast(`Groq funciona (${((performance.now() - t0) / 1000).toFixed(1).replace('.', ',')} s): ${r.ar}`);
+  } catch(e) { toast(e.message, 'err'); }
+  b.disabled = false; b.textContent = 'Probar Groq';
+};
 $('#sEngine').onchange = e => { S.engine = e.target.value; geminiCoolUntil = 0; memCache.clear(); saveS(); };
 $('#sNvUrl').oninput = e => { S.nvUrl = e.target.value.trim(); saveS(); };
 $('#sNvToken').oninput = e => { S.nvToken = e.target.value.trim(); saveS(); };
@@ -1105,7 +1163,7 @@ document.addEventListener('keydown', e => {
 /* ============ Inicio ============ */
 applySettings();
 syncSettingsUI();
-if (!S.apiKey && !S.nvUrl) setTimeout(askKey, 400);
+if (!S.apiKey && !S.nvUrl && !S.groqKey) setTimeout(askKey, 400);
 </script>
 </body>
 </html>
