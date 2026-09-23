@@ -418,6 +418,14 @@ function modal(title, html, actions = [{label:'Entendido', primary:true}]) {
 function b64ToBytes(b64) { const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; }
 function bytesToB64(u) { let s = ''; const CH = 0x8000; for (let i = 0; i < u.length; i += CH) s += String.fromCharCode.apply(null, u.subarray(i, i + CH)); return btoa(s); }
 
+async function fetchT(url, opts, ms, label) {
+  const ac = new AbortController(); const t = setTimeout(() => ac.abort(), ms);
+  try { return await fetch(url, {...opts, signal: ac.signal}); }
+  catch(e) {
+    if (e.name === 'AbortError') throw Object.assign(new Error(`${label} no responde (más de ${Math.round(ms/1000)} s).`), {status:0, timeout:true});
+    throw Object.assign(new Error(`Sin conexión con ${label}.`), {status:0});
+  } finally { clearTimeout(t); }
+}
 let actx = null;
 function ctx() { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); return actx; }
 
@@ -431,12 +439,9 @@ async function askKey() {
 }
 async function gemini(mdl, payload) {
   if (!S.apiKey) { askKey(); throw Object.assign(new Error('NOKEY'), {silent:true}); }
-  let r;
-  try {
-    r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(mdl)}:generateContent`, {
-      method:'POST', headers:{'Content-Type':'application/json', 'x-goog-api-key':S.apiKey}, body:JSON.stringify(payload)
-    });
-  } catch(e) { throw Object.assign(new Error('Sin conexión a internet.'), {status:0}); }
+  const r = await fetchT(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(mdl)}:generateContent`, {
+    method:'POST', headers:{'Content-Type':'application/json', 'x-goog-api-key':S.apiKey}, body:JSON.stringify(payload)
+  }, /tts/.test(mdl) ? 25000 : 20000, 'Gemini');
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
     const m = (j.error && j.error.message) || '';
@@ -444,6 +449,7 @@ async function gemini(mdl, payload) {
     if (r.status === 429) throw E('Límite de uso alcanzado. Espera unos segundos y repite.');
     if (r.status === 404) throw E(`El modelo «${mdl}» no está disponible. Cámbialo en Ajustes.`);
     if (r.status === 400 && /api key/i.test(m)) throw E('La clave de Gemini no es válida. Revísala en Ajustes.');
+    if (r.status === 401) throw E('Google no acepta la clave de Gemini (401). Crea una clave nueva en AI Studio.');
     if (r.status === 403) throw E('La clave no tiene permiso para este modelo. Revísala en Ajustes.');
     throw E(m || ('Error ' + r.status));
   }
@@ -470,28 +476,47 @@ function engineReady() {
 }
 async function nvidia(system, user) {
   if (!nvReady()) { askNv(); throw Object.assign(new Error('NONV'), {silent:true}); }
-  let r;
-  try {
-    r = await fetch(S.nvUrl, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body:JSON.stringify({token:S.nvToken, models:S.nvModels, system, user})});
-  } catch(e) { throw new Error('No se puede conectar con el Apps Script de NVIDIA.'); }
+  const r = await fetchT(S.nvUrl, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body:JSON.stringify({token:S.nvToken, models:S.nvModels, system, user})}, 30000, 'NVIDIA');
   const j = await r.json().catch(() => null);
   if (!j) throw new Error('El Apps Script no responde bien. Comprueba que está implementado con acceso para «Cualquier usuario».');
   if (j.error) throw new Error('NVIDIA: ' + j.error);
   return j.text || '';
 }
+/* Petición "escalonada": si Gemini tarda, se lanza otra petición en paralelo
+   (y después NVIDIA) y se usa la primera que responda. */
+function race(stages) {
+  return new Promise((resolve, reject) => {
+    let done = false, running = 0, idx = 0, lastErr = null;
+    const timers = [];
+    const finish = (fn, v) => { if (done) return; done = true; timers.forEach(clearTimeout); fn(v); };
+    const launchStage = i => {
+      if (done || i !== idx || i >= stages.length) return;
+      idx++;
+      const st = stages[i];
+      if (st.kind === 'n' && Date.now() - lastFallbackToast > 60000) { lastFallbackToast = Date.now(); toast('Gemini va lento: pruebo también con NVIDIA.'); }
+      running++;
+      st.fn().then(r => finish(resolve, r)).catch(e => {
+        running--; lastErr = e;
+        const transient = e.status === 0 || e.status === 429 || e.status >= 500;
+        if (e.silent || (st.kind === 'g' && !transient)) return finish(reject, e);
+        if (e.status === 429) { geminiCoolUntil = Date.now() + 60000; while (idx < stages.length && stages[idx].kind === 'g') idx++; }
+        if (idx < stages.length) launchStage(idx);
+        else if (running === 0) finish(reject, lastErr);
+      });
+    };
+    stages.forEach((st, i) => { timers[i] = setTimeout(() => launchStage(i), st.delay); });
+  });
+}
 async function llm(system, user) { // devuelve {raw, engine}
+  const callN = () => nvidia(system, user).then(raw => ({raw, engine:'NVIDIA'}));
   const useNv = S.engine === 'nvidia' || (S.engine === 'auto' && nvReady() && (!S.apiKey || geminiCooling()));
-  if (useNv) return {raw: await nvidia(system, user), engine:'NVIDIA'};
-  try {
-    const j = await gemini(model(), {systemInstruction:{parts:[{text:system}]}, contents:[{role:'user', parts:[{text:user}]}], generationConfig:genCfg()});
-    return {raw: textOf(j), engine:'Gemini'};
-  } catch(e) {
-    if (e.silent || S.engine !== 'auto' || !nvReady()) throw e;
-    if (e.status === 429) geminiCoolUntil = Date.now() + 60000;
-    if (Date.now() - lastFallbackToast > 60000) { lastFallbackToast = Date.now(); toast(e.status === 429 ? 'Gemini ha llegado al límite: traduzco con NVIDIA.' : 'Gemini ha fallado: traduzco con NVIDIA.'); }
-    return {raw: await nvidia(system, user), engine:'NVIDIA'};
-  }
+  if (useNv) return callN();
+  const callG = () => gemini(model(), {systemInstruction:{parts:[{text:system}]}, contents:[{role:'user', parts:[{text:user}]}], generationConfig:genCfg()})
+    .then(j => ({raw: textOf(j), engine:'Gemini'}));
+  const stages = [{delay:0, fn:callG, kind:'g'}, {delay:3500, fn:callG, kind:'g'}];
+  if (S.engine === 'auto' && nvReady()) stages.push({delay:8000, fn:callN, kind:'n'});
+  return race(stages);
 }
 const daUsesAI = () => S.daIn === 'ai' && S.engine !== 'nvidia' && !!S.apiKey && !geminiCooling();
 
@@ -526,7 +551,8 @@ async function translateAudio(wavB64) {
 1) Transcribe exactamente lo que dice, en alfabeto árabe, en "arabic".
 2) Tradúcelo al español en "spanish".
 Si no se oye voz o no se entiende, deja "arabic" y "spanish" vacíos y explícalo en "note". "source" = "darija".`;
-  const j = await gemini(model(), {systemInstruction:{parts:[{text:SYS()}]}, contents:[{role:'user', parts:[{inlineData:{mimeType:'audio/wav', data:wavB64}}, {text:p}]}], generationConfig:genCfg()});
+  const call = () => gemini(model(), {systemInstruction:{parts:[{text:SYS()}]}, contents:[{role:'user', parts:[{inlineData:{mimeType:'audio/wav', data:wavB64}}, {text:p}]}], generationConfig:genCfg()});
+  const j = await race([{delay:0, fn:call, kind:'g'}, {delay:5000, fn:call, kind:'g'}]);
   const o = norm(parseJSON(textOf(j)), 'darija'); o.engine = 'Gemini'; return o;
 }
 function norm(o, forced) {
