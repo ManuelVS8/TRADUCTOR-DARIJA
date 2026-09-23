@@ -168,6 +168,8 @@ body[data-script="lat"] .ar,body[data-script="lat"] .st-ar,body[data-script="lat
 .mbox h2{margin:0 0 8px;font-size:1.2rem;font-weight:600}
 .mbody{color:var(--muted)}
 .mbody ol{padding-left:20px;margin:8px 0}
+.mbox:has(.diag){max-width:680px}
+.diag{width:100%;border-collapse:collapse;font-size:.9rem;margin-top:6px}.diag td{padding:6px 4px;border-bottom:1px solid var(--line);vertical-align:top}.diag .ok{color:var(--menta);font-weight:600}.diag .ko{color:var(--rojo);font-weight:600}
 .mact{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
 #toasts{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:90;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;width:min(92vw,520px)}
 .toast{background:var(--noche);color:#fff;padding:10px 16px;border-radius:12px;font-size:.95rem;box-shadow:0 6px 24px rgba(0,0,0,.25);text-align:center}
@@ -379,7 +381,8 @@ body[data-script="lat"] .ar,body[data-script="lat"] .st-ar,body[data-script="lat
     </div>
 
     <div class="row" style="margin-top:10px;flex-wrap:wrap">
-      <button class="btn primary" id="sTest">Probar clave y voz</button>
+      <button class="btn primary" id="sDiag">Diagnóstico completo</button>
+      <button class="btn" id="sTest">Probar clave y voz</button>
       <button class="btn" id="sClearCache">Borrar frases traducidas</button>
     </div>
 
@@ -513,8 +516,13 @@ async function nvidia(system, user) {
   if (!nvReady()) { askNv(); throw Object.assign(new Error('NONV'), {silent:true}); }
   const r = await fetchT(S.nvUrl, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
     body:JSON.stringify({token:S.nvToken, models:S.nvModels, system, user})}, 30000, 'NVIDIA');
-  const j = await r.json().catch(() => null);
-  if (!j) throw new Error('El Apps Script no responde bien. Comprueba que está implementado con acceso para «Cualquier usuario».');
+  const txt = await r.text().catch(() => '');
+  let j = null; try { j = JSON.parse(txt); } catch(e) {}
+  if (!j) {
+    const plain = txt.replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>/g, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (/accounts\.google|ServiceLogin|Iniciar sesi|Sign in/i.test(txt)) throw new Error('El Apps Script pide iniciar sesión: en la implementación, «Quién tiene acceso» debe ser «Cualquier usuario».');
+    throw new Error(`Apps Script (${r.status}): ${plain.slice(0, 180) || 'respuesta vacía'}`);
+  }
   if (j.error) throw new Error('NVIDIA: ' + j.error);
   return j.text || '';
 }
@@ -1139,6 +1147,47 @@ $('#sNvTest').onclick = async () => {
   } catch(e) { if (!e.silent) toast(e.message, 'err'); }
   b.disabled = false; b.textContent = 'Probar NVIDIA';
 };
+async function runDiag() {
+  const rows = [];
+  const secs = t => ((performance.now() - t) / 1000).toFixed(1).replace('.', ',') + ' s';
+  const test = async (name, fn) => {
+    const t = performance.now();
+    try { const info = await fn(); rows.push([name, true, secs(t), info || '']); }
+    catch(e) { rows.push([name, false, secs(t), e.message || String(e)]); }
+  };
+  const b = $('#sDiag'); b.disabled = true; b.textContent = 'Comprobando… (hasta 1 min)';
+  await test('Internet (Google)', async () => { await fetchT('https://www.gstatic.com/generate_204', {mode:'no-cors', cache:'no-store'}, 10000, 'Google'); });
+  if (S.apiKey) {
+    await test('Gemini: clave', async () => {
+      const r = await fetchT('https://generativelanguage.googleapis.com/v1beta/models?pageSize=50', {headers:{'x-goog-api-key':S.apiKey}}, 15000, 'Gemini');
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(`Error ${r.status}: ${(j.error && j.error.message) || ''}`.slice(0, 160));
+      const names = (j.models || []).map(m => m.name.replace('models/', ''));
+      return names.includes(model()) ? `Clave válida. El modelo ${model()} existe.` : `Clave válida, pero no aparece «${model()}» en la lista.`;
+    });
+    await test('Gemini: traducir', async () => {
+      const j = await gemini(model(), {contents:[{role:'user', parts:[{text:'Traduce al darija marroquí, solo la traducción: Hola'}]}], generationConfig: /flash-lite/.test(model()) ? {} : {thinkingConfig:{thinkingLevel:'low'}}});
+      return 'Respuesta: ' + textOf(j).trim().slice(0, 60);
+    });
+  } else rows.push(['Gemini', false, '-', 'No hay clave de Gemini en Ajustes.']);
+  if (S.groqKey) await test('Groq: traducir', async () => 'Respuesta: ' + (await groq('Responde en JSON: {"arabic":"..."}', 'Traduce al darija marroquí: Hola')).slice(0, 60));
+  else rows.push(['Groq', null, '-', 'Sin clave (opcional).']);
+  if (S.nvUrl) {
+    await test('Apps Script: conexión', async () => {
+      const r = await fetchT(S.nvUrl, {cache:'no-store'}, 20000, 'Apps Script');
+      const txt = await r.text().catch(() => ''); let j = null; try { j = JSON.parse(txt); } catch(e) {}
+      if (!j || !j.ok) throw new Error(`Estado ${r.status}. ` + txt.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160));
+      return 'El script responde.';
+    });
+    await test('NVIDIA: traducir', async () => 'Respuesta: ' + (await nvidia('Responde solo con la traducción.', 'Traduce al darija marroquí: Hola')).slice(0, 60));
+  } else rows.push(['NVIDIA', null, '-', 'Sin configurar (opcional).']);
+  b.disabled = false; b.textContent = 'Diagnóstico completo';
+  const html = `<table class="diag">${rows.map(([n, ok, t, info]) =>
+    `<tr><td class="${ok === true ? 'ok' : ok === false ? 'ko' : ''}">${ok === true ? '✔' : ok === false ? '✘' : '–'} ${esc(n)}</td><td>${esc(t)}</td><td>${esc(info)}</td></tr>`).join('')}</table>
+    <p class="help" style="margin-top:10px">Haz una captura de esta tabla y envíamela.</p>`;
+  modal('Resultado del diagnóstico', html);
+}
+$('#sDiag').onclick = runDiag;
 $('#sTest').onclick = async () => {
   const b = $('#sTest'); b.disabled = true; b.textContent = 'Probando…';
   try {
