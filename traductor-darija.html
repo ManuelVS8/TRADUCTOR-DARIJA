@@ -402,7 +402,7 @@ const ICON_BIG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 const ICON_MIC = $('#talkEs').innerHTML;
 const ICON_STOP = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
 
-const DEF = {apiKey:'', model:'gemini-3.5-flash-lite', modelCustom:'', simple:true, script:'both', tts:'google', gemVoice:'Kore', arVoice:'', esVoice:'', rate:0.9, auto:true, daIn:'ai', liveVoice:false, liveScale:1, engine:'auto', nvUrl:'', nvToken:'', nvModels:'google/gemma-4-31b-it', groqKey:'', groqModel:'llama-3.3-70b-versatile'};
+const DEF = {apiKey:'', model:'gemini-3.5-flash-lite', modelCustom:'', simple:true, script:'both', tts:'google', gemVoice:'Kore', arVoice:'', esVoice:'', rate:0.9, auto:true, daIn:'ai', liveVoice:false, liveScale:1, engine:'auto', nvUrl:'', nvToken:'', nvModels:'meta/llama-3.1-70b-instruct,qwen/qwen3-32b,mistralai/mixtral-8x22b-instruct-v0.1', groqKey:'', groqModel:'llama-3.3-70b-versatile'};
 const S = (() => { try { return Object.assign({}, DEF, JSON.parse(localStorage.getItem('puente-settings') || '{}')); } catch(e) { return {...DEF}; } })();
 if ((S.ver || 1) < 2) { S.tts = 'google'; S.ver = 2; try { localStorage.setItem('puente-settings', JSON.stringify(S)); } catch(e) {} }
 const saveS = () => { try { localStorage.setItem('puente-settings', JSON.stringify(S)); } catch(e) {} };
