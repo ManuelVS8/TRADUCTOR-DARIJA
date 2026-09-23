@@ -452,11 +452,11 @@ async function askKey() {
     [{label:'Ahora no', value:0}, {label:'Abrir ajustes', primary:true, value:1}]);
   if (r === 1) openSettings();
 }
-async function gemini(mdl, payload) {
+async function gemini(mdl, payload, ms) {
   if (!S.apiKey) { askKey(); throw Object.assign(new Error('NOKEY'), {silent:true}); }
   const r = await fetchT(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(mdl)}:generateContent`, {
     method:'POST', headers:{'Content-Type':'application/json', 'x-goog-api-key':S.apiKey}, body:JSON.stringify(payload)
-  }, /tts/.test(mdl) ? 25000 : 20000, 'Gemini');
+  }, ms || (/tts/.test(mdl) ? 25000 : 20000), 'Gemini');
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
     const m = (j.error && j.error.message) || '';
@@ -470,14 +470,21 @@ async function gemini(mdl, payload) {
   }
   return j;
 }
-const genCfg = () => { const g = {responseMimeType:'application/json'}; if (!/flash-lite/.test(model())) g.thinkingConfig = {thinkingLevel:'low'}; return g; };
+const thinkCfg = m => /^gemini-3.*flash-lite/.test(m) ? {thinkingLevel:'minimal'} : /lite/.test(m) ? null : /^gemini-2\.5/.test(m) ? {thinkingBudget:0} : /^gemini-3/.test(m) ? {thinkingLevel:'low'} : null;
+const genCfg = () => { const g = {responseMimeType:'application/json'}; const t = thinkCfg(model()); if (t) g.thinkingConfig = t; return g; };
 const textOf = j => ((j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || []).map(p => p.text || '').join('');
 function parseJSON(t) { t = t.replace(/```json|```/g, '').trim(); const a = t.indexOf('{'), b = t.lastIndexOf('}'); return JSON.parse(t.slice(a, b + 1)); }
 
 /* ============ NVIDIA (reserva, vía Apps Script) ============ */
 let geminiCoolUntil = 0, lastFallbackToast = 0;
 const geminiCooling = () => Date.now() < geminiCoolUntil;
+const nvURL = () => { let u = (S.nvUrl || '').trim(); if (u && !/^https?:\/\//i.test(u)) u = 'https://' + u; return u; };
 const nvReady = () => !!S.nvUrl;
+function checkNvURL() {
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec/.test(nvURL()))
+    throw new Error('La dirección del Apps Script no es correcta. Debe ser así: https://script.google.com/macros/s/…/exec');
+  return nvURL();
+}
 async function askNv() {
   const r = await modal('Falta configurar NVIDIA',
     '<p>Pega en Ajustes la dirección de tu Apps Script de NVIDIA y su código de acceso.</p>',
@@ -514,7 +521,7 @@ function engineReady() {
 }
 async function nvidia(system, user) {
   if (!nvReady()) { askNv(); throw Object.assign(new Error('NONV'), {silent:true}); }
-  const r = await fetchT(S.nvUrl, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+  const r = await fetchT(checkNvURL(), {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
     body:JSON.stringify({token:S.nvToken, models:S.nvModels, system, user})}, 30000, 'NVIDIA');
   const txt = await r.text().catch(() => '');
   let j = null; try { j = JSON.parse(txt); } catch(e) {}
@@ -1148,7 +1155,7 @@ $('#sNvTest').onclick = async () => {
   b.disabled = false; b.textContent = 'Probar NVIDIA';
 };
 async function runDiag() {
-  const rows = [];
+  const rows = []; let cands = [];
   const secs = t => ((performance.now() - t) / 1000).toFixed(1).replace('.', ',') + ' s';
   const test = async (name, fn) => {
     const t = performance.now();
@@ -1163,18 +1170,49 @@ async function runDiag() {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(`Error ${r.status}: ${(j.error && j.error.message) || ''}`.slice(0, 160));
       const names = (j.models || []).map(m => m.name.replace('models/', ''));
+      cands = (j.models || []).filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+        .map(m => m.name.replace('models/', ''))
+        .filter(n => /^gemini-[\d.]+-flash/.test(n) && !/(tts|image|live|audio|embed|robotics|omni|native|exp|\d{2}-\d{2})/.test(n));
+      cands.sort((a, b) => (/lite/.test(b) - /lite/.test(a)) || b.localeCompare(a, undefined, {numeric:true}));
+      cands = [model(), ...cands.filter(n => n !== model())].slice(0, 6);
       return names.includes(model()) ? `Clave válida. El modelo ${model()} existe.` : `Clave válida, pero no aparece «${model()}» en la lista.`;
     });
-    await test('Gemini: traducir', async () => {
-      const j = await gemini(model(), {contents:[{role:'user', parts:[{text:'Traduce al darija marroquí, solo la traducción: Hola'}]}], generationConfig: /flash-lite/.test(model()) ? {} : {thinkingConfig:{thinkingLevel:'low'}}});
-      return 'Respuesta: ' + textOf(j).trim().slice(0, 60);
+    b.textContent = 'Probando modelos de Gemini…';
+    const probe = async m => {
+      const t = performance.now();
+      const cfg = thinkCfg(m);
+      try {
+        const j = await gemini(m, {contents:[{role:'user', parts:[{text:'Traduce al darija marroquí, solo la traducción: Hola'}]}], generationConfig: cfg ? {thinkingConfig:cfg} : {}}, 15000);
+        return {m, ok:true, t:performance.now() - t, info:'Respuesta: ' + textOf(j).trim().slice(0, 40)};
+      } catch(e) { return {m, ok:false, t:performance.now() - t, info:e.message}; }
+    };
+    if (!cands.length) cands = [model()];
+    const res = await Promise.all(cands.map(probe));
+    res.forEach(x => rows.push(['Gemini: ' + x.m, x.ok, (x.t / 1000).toFixed(1).replace('.', ',') + ' s', x.info + (/lite/.test(x.m) ? '' : ' (solo ~20 usos/día gratis)')]));
+    const good = res.filter(x => x.ok).sort((a, b) => (/lite/.test(b.m) - /lite/.test(a.m)) || a.t - b.t);
+    if (good.length && good[0].m !== model()) {
+      const best = good[0].m;
+      if (['gemini-3.5-flash-lite', 'gemini-3.8-flash'].includes(best)) S.model = best; else { S.model = 'custom'; S.modelCustom = best; }
+      memCache.clear(); saveS(); syncSettingsUI();
+      rows.push(['Cambio automático', true, '-', `Puente usará ahora ${best}, que ha respondido más rápido.`]);
+    }
+    b.textContent = 'Comprobando… (hasta 1 min)';
+    await test('Interactions (gemini-3.1-flash-lite)', async () => {
+      const r = await fetchT('https://generativelanguage.googleapis.com/v1beta/interactions', {method:'POST',
+        headers:{'Content-Type':'application/json', 'x-goog-api-key':S.apiKey},
+        body:JSON.stringify({model:'gemini-3.1-flash-lite', input:'Reply only with OK', store:false})}, 15000, 'Gemini Interactions');
+      const txt = await r.text();
+      if (!r.ok) throw new Error(`Error ${r.status}: ${txt.slice(0, 140)}`);
+      let out = '';
+      try { const j = JSON.parse(txt); out = j.output_text || (j.steps || []).flatMap(x => x.content || []).filter(x => x.type === 'text').map(x => x.text).join(''); } catch(e) {}
+      return 'Responde: ' + (out || txt.slice(0, 80));
     });
   } else rows.push(['Gemini', false, '-', 'No hay clave de Gemini en Ajustes.']);
   if (S.groqKey) await test('Groq: traducir', async () => 'Respuesta: ' + (await groq('Responde en JSON: {"arabic":"..."}', 'Traduce al darija marroquí: Hola')).slice(0, 60));
   else rows.push(['Groq', null, '-', 'Sin clave (opcional).']);
   if (S.nvUrl) {
     await test('Apps Script: conexión', async () => {
-      const r = await fetchT(S.nvUrl, {cache:'no-store'}, 20000, 'Apps Script');
+      const r = await fetchT(checkNvURL(), {cache:'no-store'}, 20000, 'Apps Script');
       const txt = await r.text().catch(() => ''); let j = null; try { j = JSON.parse(txt); } catch(e) {}
       if (!j || !j.ok) throw new Error(`Estado ${r.status}. ` + txt.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160));
       return 'El script responde.';
