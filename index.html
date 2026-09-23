@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
 <title>Puente · Traductor español–darija</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -300,11 +301,12 @@ body[data-script="lat"] .ar,body[data-script="lat"] .st-ar,body[data-script="lat
     <div class="field">
       <label for="sTts">Voz en darija</label>
       <select id="sTts">
-        <option value="gemini">Voz IA de Gemini (acento marroquí)</option>
+        <option value="google">Voz de Google (rápida, recomendada)</option>
+        <option value="gemini">Voz IA de Gemini (acento marroquí, lenta)</option>
         <option value="browser">Voz árabe del dispositivo</option>
         <option value="off">Sin voz</option>
       </select>
-      <p class="help">La voz IA suena más natural pero tarda 1–3 s. La del dispositivo es instantánea, pero suele leer en árabe estándar y no todos los Chromebooks la tienen.</p>
+      <p class="help">La voz de Google suena casi al instante. La voz IA tiene mejor acento, pero puede tardar varios segundos. Si una falla, Puente usa otra automáticamente.</p>
     </div>
     <div class="field" id="fGemVoice">
       <label for="sGemVoice">Voz IA</label>
@@ -385,8 +387,9 @@ const ICON_BIG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 const ICON_MIC = $('#talkEs').innerHTML;
 const ICON_STOP = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
 
-const DEF = {apiKey:'', model:'gemini-3.5-flash-lite', modelCustom:'', simple:true, script:'both', tts:'gemini', gemVoice:'Kore', arVoice:'', esVoice:'', rate:0.9, auto:true, daIn:'ai', liveVoice:false, liveScale:1, engine:'auto', nvUrl:'', nvToken:'', nvModels:'google/gemma-4-31b-it'};
+const DEF = {apiKey:'', model:'gemini-3.5-flash-lite', modelCustom:'', simple:true, script:'both', tts:'google', gemVoice:'Kore', arVoice:'', esVoice:'', rate:0.9, auto:true, daIn:'ai', liveVoice:false, liveScale:1, engine:'auto', nvUrl:'', nvToken:'', nvModels:'google/gemma-4-31b-it'};
 const S = (() => { try { return Object.assign({}, DEF, JSON.parse(localStorage.getItem('puente-settings') || '{}')); } catch(e) { return {...DEF}; } })();
+if ((S.ver || 1) < 2) { S.tts = 'google'; S.ver = 2; try { localStorage.setItem('puente-settings', JSON.stringify(S)); } catch(e) {} }
 const saveS = () => { try { localStorage.setItem('puente-settings', JSON.stringify(S)); } catch(e) {} };
 const model = () => S.model === 'custom' ? (S.modelCustom || DEF.model) : S.model;
 
@@ -446,6 +449,7 @@ async function gemini(mdl, payload) {
   }
   return j;
 }
+const genCfg = () => { const g = {responseMimeType:'application/json'}; if (!/flash-lite/.test(model())) g.thinkingConfig = {thinkingLevel:'low'}; return g; };
 const textOf = j => ((j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || []).map(p => p.text || '').join('');
 function parseJSON(t) { t = t.replace(/```json|```/g, '').trim(); const a = t.indexOf('{'), b = t.lastIndexOf('}'); return JSON.parse(t.slice(a, b + 1)); }
 
@@ -480,7 +484,7 @@ async function llm(system, user) { // devuelve {raw, engine}
   const useNv = S.engine === 'nvidia' || (S.engine === 'auto' && nvReady() && (!S.apiKey || geminiCooling()));
   if (useNv) return {raw: await nvidia(system, user), engine:'NVIDIA'};
   try {
-    const j = await gemini(model(), {systemInstruction:{parts:[{text:system}]}, contents:[{role:'user', parts:[{text:user}]}], generationConfig:{responseMimeType:'application/json'}});
+    const j = await gemini(model(), {systemInstruction:{parts:[{text:system}]}, contents:[{role:'user', parts:[{text:user}]}], generationConfig:genCfg()});
     return {raw: textOf(j), engine:'Gemini'};
   } catch(e) {
     if (e.silent || S.engine !== 'auto' || !nvReady()) throw e;
@@ -522,7 +526,7 @@ async function translateAudio(wavB64) {
 1) Transcribe exactamente lo que dice, en alfabeto árabe, en "arabic".
 2) Tradúcelo al español en "spanish".
 Si no se oye voz o no se entiende, deja "arabic" y "spanish" vacíos y explícalo en "note". "source" = "darija".`;
-  const j = await gemini(model(), {systemInstruction:{parts:[{text:SYS()}]}, contents:[{role:'user', parts:[{inlineData:{mimeType:'audio/wav', data:wavB64}}, {text:p}]}], generationConfig:{responseMimeType:'application/json'}});
+  const j = await gemini(model(), {systemInstruction:{parts:[{text:SYS()}]}, contents:[{role:'user', parts:[{inlineData:{mimeType:'audio/wav', data:wavB64}}, {text:p}]}], generationConfig:genCfg()});
   const o = norm(parseJSON(textOf(j)), 'darija'); o.engine = 'Gemini'; return o;
 }
 function norm(o, forced) {
@@ -548,6 +552,7 @@ function stopSpeaking() {
   speakToken++;
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   if (curSource) { try { curSource.stop(); } catch(e) {} curSource = null; }
+  if (curAudio) { try { curAudio.pause(); } catch(e) {} curAudio = null; }
 }
 function browserSpeak(text, lang, token) {
   return new Promise(res => {
@@ -592,6 +597,29 @@ function playBuffer(buf, token) {
     curSource = s; s.start();
   });
 }
+let curAudio = null;
+function googleSpeak(text, token) {
+  // Trocea en fragmentos de hasta ~180 caracteres (límite del servicio)
+  const parts = []; let cur = '';
+  text.split(/(?<=[.!?؟،,])\s+|\s+/).forEach(w => {
+    if ((cur + ' ' + w).trim().length > 180) { if (cur) parts.push(cur); cur = w; } else cur = (cur + ' ' + w).trim();
+  });
+  if (cur) parts.push(cur);
+  return new Promise(res => {
+    let i = 0;
+    const next = () => {
+      if (token !== speakToken) return res(true);
+      if (i >= parts.length) { curAudio = null; return res(true); }
+      const a = new Audio('https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=ar&q=' + encodeURIComponent(parts[i++]));
+      a.playbackRate = Math.max(0.7, Math.min(1.2, S.rate / 0.9));
+      a.onended = next;
+      a.onerror = () => { curAudio = null; res(i > 1); };
+      curAudio = a;
+      a.play().catch(() => { curAudio = null; res(false); });
+    };
+    next();
+  });
+}
 let warnedNoAr = false;
 async function speak(text, lang) {
   if (!text) return;
@@ -599,12 +627,12 @@ async function speak(text, lang) {
   const token = speakToken;
   if (lang === 'es') return browserSpeak(text, 'es', token);
   if (S.tts === 'off') return;
-  if (S.tts === 'gemini' && S.apiKey) {
-    try { const buf = await geminiTTS(text); return playBuffer(buf, token); }
-    catch(e) { toast('Voz IA no disponible: uso la voz del dispositivo.', 'err'); }
-  }
-  const ok = await browserSpeak(text, 'ar', token);
-  if (!ok && !warnedNoAr) { warnedNoAr = true; toast('Este dispositivo no tiene voz árabe. Activa la voz IA en Ajustes.', 'err'); }
+  const tryGemini = async () => { if (!S.apiKey) return false; try { await playBuffer(await geminiTTS(text), token); return true; } catch(e) { return false; } };
+  const order = S.tts === 'gemini' ? [tryGemini, () => googleSpeak(text, token), () => browserSpeak(text, 'ar', token)]
+              : S.tts === 'browser' ? [() => browserSpeak(text, 'ar', token), () => googleSpeak(text, token), tryGemini]
+              : [() => googleSpeak(text, token), () => browserSpeak(text, 'ar', token), tryGemini];
+  for (const f of order) { if (token !== speakToken) return; if (await f()) return; }
+  if (!warnedNoAr) { warnedNoAr = true; toast('No se ha podido reproducir la voz en darija.', 'err'); }
 }
 
 /* ============ Micrófono ============ */
@@ -638,7 +666,7 @@ async function recordAudio(onLevel) {
       const rms = Math.sqrt(s / data.length), now = performance.now();
       onLevel && onLevel(rms);
       if (rms > 0.018) { heard = true; lastLoud = now; }
-      if ((heard && now - lastLoud > 1800) || now - t0 > 30000 || (!heard && now - t0 > 9000)) stop();
+      if ((heard && now - lastLoud > 1200) || now - t0 > 30000 || (!heard && now - t0 > 9000)) stop();
     }, 100);
     function stop() { if (mr.state !== 'inactive') mr.stop(); }
     recStop = () => { manual = true; if (performance.now() - t0 > 800) heard = true; stop(); };
@@ -688,11 +716,13 @@ function addMsg(from) {
   const el = document.createElement('article');
   el.className = 'msg from-' + from;
   el.innerHTML = `<p class="who">${from === 'es' ? 'Maestro' : 'Alumno/a'}</p><p class="pending">Traduciendo…</p>`;
+  el.dataset.t0 = performance.now();
   $('#log').appendChild(el); el.scrollIntoView({behavior:'smooth', block:'end'});
   return el;
 }
 function fillMsg(el, r) {
-  const who = (r.from === 'es' ? 'Maestro' : 'Alumno/a') + (r.engine === 'NVIDIA' ? ' (NVIDIA)' : '');
+  const secs = el.dataset.t0 ? ((performance.now() - el.dataset.t0) / 1000).toFixed(1).replace('.', ',') + ' s' : '';
+  const who = (r.from === 'es' ? 'Maestro' : 'Alumno/a') + ` (${r.engine || 'Gemini'}${secs ? ', ' + secs : ''})`;
   if (r.from === 'es') {
     el.innerHTML = `<p class="who">${who}</p><p class="orig">${esc(r.es)}</p>
       <p class="ar" lang="ar" dir="rtl">${esc(r.ar)}</p>${r.latin ? `<p class="lat">${esc(r.latin)}</p>` : ''}
@@ -806,7 +836,7 @@ function startLiveRec() {
 function liveFinal(t) {
   live.buf = (live.buf + ' ' + t).trim();
   clearTimeout(live.timer);
-  if (live.buf.split(/\s+/).length >= 9) liveFlush(); else live.timer = setTimeout(liveFlush, 2000);
+  if (live.buf.split(/\s+/).length >= 7) liveFlush(); else live.timer = setTimeout(liveFlush, 1200);
 }
 function liveFlush() {
   clearTimeout(live.timer);
