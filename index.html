@@ -539,7 +539,10 @@ async function nvidia(system, user) {
     if (/accounts\.google|ServiceLogin|Iniciar sesi|Sign in/i.test(txt)) throw new Error('El Apps Script pide iniciar sesión: en la implementación, «Quién tiene acceso» debe ser «Cualquier usuario».');
     throw new Error(`Apps Script (${r.status}): ${plain.slice(0, 180) || 'respuesta vacía'}`);
   }
-  if (j.error) throw new Error('NVIDIA: ' + j.error);
+  if (j.error) {
+    const extra = j.attempts && j.attempts.length ? ' [' + j.attempts.join(' | ') + '] (' + j.active + ')' : '';
+    throw new Error('NVIDIA: ' + j.error + extra);
+  }
   return j.text || '';
 }
 /* Petición "escalonada": si Gemini tarda, se lanza otra petición en paralelo
