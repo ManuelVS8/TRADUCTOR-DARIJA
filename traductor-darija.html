@@ -4,7 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>Puente · Traductor español–darija</title>
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#18214F">
+<link rel="icon" href="./icon-192.png">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Traductor Darija">
+<title>Traductor Darija · español–darija</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Readex+Pro:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -28,9 +35,7 @@ button{font:inherit;cursor:pointer}
 /* Cabecera */
 .top{background:var(--noche);color:#fff;display:flex;align-items:center;gap:14px;padding:10px 16px;flex-wrap:wrap}
 .brand{display:flex;align-items:baseline;gap:8px;margin-right:auto}
-.mark{width:22px;height:22px;position:relative;align-self:center}
-.mark::before,.mark::after{content:"";position:absolute;inset:3px;background:var(--azafran);border-radius:3px}
-.mark::after{transform:rotate(45deg)}
+.school-logo{height:32px;width:auto;border-radius:6px;align-self:center;background:#fff;padding:2px}
 .name{font-weight:600;font-size:1.25rem;letter-spacing:.01em}
 .name-ar{font-size:1.3rem;color:var(--azafran);font-weight:500}
 .tabs{display:flex;gap:4px;background:rgba(255,255,255,.08);padding:4px;border-radius:12px}
@@ -161,6 +166,8 @@ body[data-script="lat"] .ar,body[data-script="lat"] .st-ar,body[data-script="lat
 .sheet-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
 .sheet-head .icon-btn{color:var(--ink)}
 .privacy{background:var(--papel);border-radius:12px;padding:10px 12px;font-size:.88rem;color:var(--muted);margin-top:18px}
+.credit{display:flex;align-items:center;gap:12px;margin-top:16px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:.85rem;line-height:1.4}
+.credit img{height:40px;width:auto;border-radius:8px;background:#fff;padding:3px;flex:0 0 auto}
 
 /* Modales y avisos */
 .mback{position:fixed;inset:0;background:rgba(10,14,35,.55);z-index:80;display:grid;place-items:center;padding:16px}
@@ -188,12 +195,15 @@ body[data-script="lat"] .ar,body[data-script="lat"] .st-ar,body[data-script="lat
 <body data-script="both">
 
 <header class="top">
-  <div class="brand"><span class="mark" aria-hidden="true"></span><span class="name">Puente</span><span class="name-ar" lang="ar">جسر</span></div>
+  <div class="brand"><img class="school-logo" src="https://raw.githubusercontent.com/ManuelVS8/Audios-juegos-SCIENCE/refs/heads/main/Web_Siurot/Logo_web.png" alt="Logo del C.E.I.P. Manuel Siurot"><span class="name">Traductor Darija</span></div>
   <nav class="tabs" role="tablist" aria-label="Secciones">
     <button role="tab" data-tab="conv" aria-selected="true">Conversación</button>
     <button role="tab" data-tab="live" aria-selected="false">En clase</button>
     <button role="tab" data-tab="phr" aria-selected="false">Frases</button>
   </nav>
+  <button class="icon-btn" id="btnInstall" aria-label="Instalar Traductor Darija" hidden title="Instalar Traductor Darija">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13"/><path d="M7 11l5 5 5-5"/><path d="M4 19h16"/></svg>
+  </button>
   <button class="icon-btn" id="btnSettings" aria-label="Ajustes">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
   </button>
@@ -308,7 +318,7 @@ body[data-script="lat"] .ar,body[data-script="lat"] .st-ar,body[data-script="lat
         <option value="browser">Voz árabe del dispositivo</option>
         <option value="off">Sin voz</option>
       </select>
-      <p class="help">La voz de Google suena casi al instante. La voz IA tiene mejor acento, pero puede tardar varios segundos. Si una falla, Puente usa otra automáticamente.</p>
+      <p class="help">La voz de Google suena casi al instante. La voz IA tiene mejor acento, pero puede tardar varios segundos. Si una falla, Traductor Darija usa otra automáticamente.</p>
     </div>
     <div class="field" id="fGemVoice">
       <label for="sGemVoice">Voz IA</label>
@@ -388,6 +398,11 @@ body[data-script="lat"] .ar,body[data-script="lat"] .st-ar,body[data-script="lat
     </div>
 
     <p class="privacy">El texto y el audio se envían a Google (Gemini) para traducir. Evita decir nombres completos u otros datos personales del alumnado mientras traduces.</p>
+
+    <div class="credit">
+      <img src="https://raw.githubusercontent.com/ManuelVS8/Audios-juegos-SCIENCE/refs/heads/main/Web_Siurot/Logo_web.png" alt="Logo del C.E.I.P. Manuel Siurot">
+      <div>Creado por Manuel J. Ventura Sánchez<br>C.E.I.P. Manuel Siurot</div>
+    </div>
   </div>
 </div>
 
@@ -457,7 +472,7 @@ function ctx() { if (!actx) actx = new (window.AudioContext || window.webkitAudi
 /* ============ Gemini ============ */
 async function askKey() {
   const r = await modal('Falta la clave de Gemini',
-    `<p>Para traducir, Puente usa Gemini. Solo tienes que hacerlo una vez:</p>
+    `<p>Para traducir, Traductor Darija usa Gemini. Solo tienes que hacerlo una vez:</p>
      <ol><li>Entra en <b>aistudio.google.com/apikey</b> con tu cuenta de Google.</li><li>Pulsa «Create API key» y cópiala.</li><li>Pégala en Ajustes.</li></ol>`,
     [{label:'Ahora no', value:0}, {label:'Abrir ajustes', primary:true, value:1}]);
   if (r === 1) openSettings();
@@ -1223,7 +1238,7 @@ async function runDiag() {
       const best = good[0].m;
       if (['gemini-3.5-flash-lite', 'gemini-3.8-flash'].includes(best)) S.model = best; else { S.model = 'custom'; S.modelCustom = best; }
       memCache.clear(); saveS(); syncSettingsUI();
-      rows.push(['Cambio automático', true, '-', `Puente usará ahora ${best}, que ha respondido más rápido.`]);
+      rows.push(['Cambio automático', true, '-', `Traductor Darija usará ahora ${best}, que ha respondido más rápido.`]);
     }
     b.textContent = 'Comprobando… (hasta 1 min)';
     await test('Interactions (gemini-3.1-flash-lite)', async () => {
@@ -1280,6 +1295,18 @@ document.addEventListener('keydown', e => {
 applySettings();
 syncSettingsUI();
 if (!S.apiKey && !S.nvUrl && !S.groqKey) setTimeout(askKey, 400);
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch(() => {}); });
+}
+let deferredInstall = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstall = e; $('#btnInstall').hidden = false; });
+window.addEventListener('appinstalled', () => { deferredInstall = null; $('#btnInstall').hidden = true; });
+$('#btnInstall').onclick = async () => {
+  if (!deferredInstall) return;
+  deferredInstall.prompt();
+  await deferredInstall.userChoice;
+  deferredInstall = null; $('#btnInstall').hidden = true;
+};
 </script>
 </body>
 </html>
