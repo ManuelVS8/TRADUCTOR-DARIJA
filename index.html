@@ -346,7 +346,7 @@ body[data-script="lat"] .ar,body[data-script="lat"] .st-ar,body[data-script="lat
     </div>
     <div class="field">
       <label for="sGroqKey">Clave de Groq (rápido)</label>
-      <input id="sGroqKey" type="password" autocomplete="off" placeholder="gsk_...">
+      <div class="row"><input id="sGroqKey" type="password" autocomplete="off" placeholder="gsk_..."><button class="btn" id="sGroqKeyShow">Ver</button></div>
       <p class="help">Gratis y sin tarjeta en <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a>. Si Gemini no responde en 2 s, Groq traduce en su lugar.</p>
     </div>
     <div class="field">
@@ -361,7 +361,7 @@ body[data-script="lat"] .ar,body[data-script="lat"] .st-ar,body[data-script="lat
     </div>
     <div class="field">
       <label for="sNvToken">Código de acceso</label>
-      <input id="sNvToken" type="password" autocomplete="off" placeholder="El mismo TOKEN que pusiste en el script">
+      <div class="row"><input id="sNvToken" type="password" autocomplete="off" placeholder="El mismo TOKEN que pusiste en el script"><button class="btn" id="sNvTokenShow">Ver</button></div>
     </div>
     <div class="field">
       <label for="sNvModels">Modelos NVIDIA (en orden de preferencia, separados por comas)</label>
@@ -381,6 +381,7 @@ body[data-script="lat"] .ar,body[data-script="lat"] .st-ar,body[data-script="lat
     </div>
 
     <div class="row" style="margin-top:10px;flex-wrap:wrap">
+      <button class="btn" id="sBackup">Ver copia de mis ajustes</button>
       <button class="btn primary" id="sDiag">Diagnóstico completo</button>
       <button class="btn" id="sTest">Probar clave y voz</button>
       <button class="btn" id="sClearCache">Borrar frases traducidas</button>
@@ -531,7 +532,7 @@ function engineReady() {
 async function nvidia(system, user) {
   if (!nvReady()) { askNv(); throw Object.assign(new Error('NONV'), {silent:true}); }
   const r = await fetchT(checkNvURL(), {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body:JSON.stringify({token:S.nvToken, models:S.nvModels, system, user})}, 30000, 'NVIDIA');
+    body:JSON.stringify({token:S.nvToken, models:S.nvModels, system, user})}, 40000, 'NVIDIA');
   const txt = await r.text().catch(() => '');
   let j = null; try { j = JSON.parse(txt); } catch(e) {}
   if (!j) {
@@ -1129,7 +1130,23 @@ function closeSettings() { $('#settings').hidden = true; }
 $('#btnSettings').onclick = openSettings;
 $('#setClose').onclick = closeSettings;
 $('#settings').addEventListener('click', e => { if (e.target.id === 'settings') closeSettings(); });
-$('#sKeyShow').onclick = () => { const i = $('#sKey'); i.type = i.type === 'password' ? 'text' : 'password'; $('#sKeyShow').textContent = i.type === 'password' ? 'Ver' : 'Ocultar'; };
+const toggleShow = (inputId, btnId) => { const i = $(inputId), b = $(btnId); i.type = i.type === 'password' ? 'text' : 'password'; b.textContent = i.type === 'password' ? 'Ver' : 'Ocultar'; };
+$('#sKeyShow').onclick = () => toggleShow('#sKey', '#sKeyShow');
+$('#sGroqKeyShow').onclick = () => toggleShow('#sGroqKey', '#sGroqKeyShow');
+$('#sNvTokenShow').onclick = () => toggleShow('#sNvToken', '#sNvTokenShow');
+$('#sBackup').onclick = () => {
+  const lines = [
+    ['Clave de Gemini', S.apiKey], ['Modelo de Gemini', model()],
+    ['Clave de Groq', S.groqKey], ['Modelo de Groq', S.groqModel],
+    ['URL del Apps Script (NVIDIA)', S.nvUrl], ['Código de acceso (TOKEN)', S.nvToken], ['Modelos NVIDIA', S.nvModels],
+  ].filter(([, v]) => v);
+  const text = lines.map(([k, v]) => `${k}: ${v}`).join('\n');
+  modal('Copia de tus ajustes',
+    `<p>Copia este texto y guárdalo en un sitio seguro, por ejemplo un gestor de contraseñas.</p>
+     <textarea readonly style="width:100%;min-height:180px;font-family:monospace;font-size:.85rem;border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--papel);color:var(--ink)" onclick="this.select()">${esc(text)}</textarea>`,
+    [{label:'Cerrar', primary:true}]);
+  setTimeout(() => { const ta = document.querySelector('#modalRoot textarea'); if (ta) { ta.focus(); ta.select(); } }, 50);
+};
 $('#sKey').oninput = e => { S.apiKey = e.target.value.trim(); saveS(); };
 $('#sModel').onchange = e => { S.model = e.target.value; $('#sModelCustom').hidden = S.model !== 'custom'; memCache.clear(); saveS(); };
 $('#sModelCustom').oninput = e => { S.modelCustom = e.target.value.trim(); memCache.clear(); saveS(); };
