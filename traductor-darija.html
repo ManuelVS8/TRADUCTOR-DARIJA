@@ -520,7 +520,7 @@ const groqReady = () => !!S.groqKey;
 async function groq(system, user) {
   if (!groqReady()) throw Object.assign(new Error('Falta la clave de Groq en Ajustes.'), {status:400});
   const call = async json => {
-    const body = {model:S.groqModel || DEF.groqModel, messages:[{role:'system', content:system}, {role:'user', content:user}], temperature:0.2, max_tokens:600};
+    const body = {model:S.groqModel || DEF.groqModel, messages:[{role:'system', content:system}, {role:'user', content:user}], temperature:0.2, max_tokens:1500};
     if (json) body.response_format = {type:'json_object'};
     const r = await fetchT('https://api.groq.com/openai/v1/chat/completions', {method:'POST',
       headers:{'Content-Type':'application/json', 'Authorization':'Bearer ' + S.groqKey}, body:JSON.stringify(body)}, 12000, 'Groq');
@@ -628,9 +628,16 @@ async function translate(text, dir) {
   if (dir === 'es2da') p = `Texto en español para traducir a darija:\n"""${text}"""\n"spanish" = el texto original; "arabic" = la traducción en darija.`;
   else if (dir === 'da2es') p = `Texto en darija (puede estar en alfabeto árabe, en latino o arabizi, o mezclado con francés) para traducir al español:\n"""${text}"""\n"arabic" = el original en alfabeto árabe; "spanish" = la traducción.`;
   else p = `Detecta si este texto está en español o en darija (en alfabeto árabe, en latino o arabizi, o mezclado con francés) y tradúcelo al otro idioma:\n"""${text}"""\n"spanish" y "arabic" deben contener siempre la versión en cada idioma.`;
-  const {raw, engine} = await llm(SYS(), p);
+  let {raw, engine} = await llm(SYS(), p);
   let parsed;
-  try { parsed = parseJSON(raw); } catch(e) { throw new Error('La traducción ha llegado incompleta. Repite la frase.'); }
+  try { parsed = parseJSON(raw); }
+  catch(e) {
+    // Reintento silencioso: a veces la respuesta llega cortada/incompleta.
+    try {
+      ({raw, engine} = await llm(SYS(), p));
+      parsed = parseJSON(raw);
+    } catch(e2) { throw new Error('La traducción ha llegado incompleta. Repite la frase.'); }
+  }
   const o = norm(parsed, dir === 'es2da' ? 'es' : dir === 'da2es' ? 'darija' : null);
   o.engine = engine;
   memCache.set(key, o);
